@@ -1,17 +1,29 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
-import tensorflow as tf
 import joblib
 import json
 
 class ICUModel:
     def __init__(self):
         self.scaler = StandardScaler()
-        self.model = None
+        self.mortality_model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+        self.decompensation_model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
+        self.los_model = RandomForestRegressor(
+            n_estimators=100,
+            max_depth=10,
+            random_state=42
+        )
         self.feature_importance = None
         
     def preprocess_data(self, df):
@@ -29,85 +41,117 @@ class ICUModel:
         
         return df
         
-    def create_sequences(self, df, window_size=24):
-        sequences = []
-        labels = []
+    def create_features(self, df):
+        features = []
+        labels_mortality = []
+        labels_decompensation = []
+        labels_los = []
         
         for patient_id in df['patientunitstayid'].unique():
             patient_data = df[df['patientunitstayid'] == patient_id]
             
-            if len(patient_data) >= window_size:
-                # Create sequences for each patient
-                for i in range(len(patient_data) - window_size + 1):
-                    sequence = patient_data.iloc[i:i+window_size][
-                        ['Heart Rate', 'MAP (mmHg)', 'Respiratory Rate',
-                         'O2 Saturation', 'FiO2', 'Temperature (C)',
-                         'glucose', 'pH']
-                    ].values
-                    
-                    # Use the last value as label (example: predicting next hour's vitals)
-                    label = patient_data.iloc[i+window_size-1][
-                        ['Heart Rate', 'MAP (mmHg)', 'Respiratory Rate']
-                    ].values
-                    
-                    sequences.append(sequence)
-                    labels.append(label)
-        
-        return np.array(sequences), np.array(labels)
-    
-    def build_model(self, input_shape):
-        model = Sequential([
-            Bidirectional(LSTM(64, return_sequences=True), 
-                         input_shape=input_shape),
-            Dropout(0.2),
-            Bidirectional(LSTM(32)),
-            Dropout(0.2),
-            Dense(32, activation='relu'),
-            Dense(3, activation='linear')  # Predicting 3 vital signs
-        ])
-        
-        model.compile(optimizer='adam', loss='mse', metrics=['mae'])
-        self.model = model
-        
-    def train(self, X_train, y_train, epochs=50, batch_size=32, validation_split=0.2):
-        if self.model is None:
-            self.build_model((X_train.shape[1], X_train.shape[2]))
+            # Calculate statistical features
+            stats_features = []
+            for col in ['Heart Rate', 'MAP (mmHg)', 'Respiratory Rate',
+                       'O2 Saturation', 'FiO2', 'Temperature (C)',
+                       'glucose', 'pH']:
+                values = patient_data[col].values
+                stats_features.extend([
+                    np.mean(values),
+                    np.std(values),
+                    np.min(values),
+                    np.max(values),
+                    np.median(values)
+                ])
             
-        history = self.model.fit(
-            X_train, y_train,
-            epochs=epochs,
-            batch_size=batch_size,
-            validation_split=validation_split,
-            verbose=1
-        )
+            # Add static features
+            static_features = [
+                patient_data['admissionweight'].iloc[0],
+                patient_data['admissionheight'].iloc[0],
+                len(patient_data)  # Length of stay
+            ]
+            
+            features.append(stats_features + static_features)
+            
+            # Labels (you'll need to modify these based on your actual data)
+            labels_mortality.append(0)  # Example mortality label
+            labels_decompensation.append(0)  # Example decompensation label
+            labels_los.append(len(patient_data))  # Length of stay in hours
         
-        return history
+        return (np.array(features), 
+                np.array(labels_mortality),
+                np.array(labels_decompensation),
+                np.array(labels_los))
+    
+    def train(self, X, y_mortality, y_decompensation, y_los):
+        # Scale features
+        X_scaled = self.scaler.fit_transform(X)
+        
+        # Train mortality model
+        self.mortality_model.fit(X_scaled, y_mortality)
+        
+        # Train decompensation model
+        self.decompensation_model.fit(X_scaled, y_decompensation)
+        
+        # Train length of stay model
+        self.los_model.fit(X_scaled, y_los)
+        
+        # Calculate feature importance
+        self.calculate_feature_importance()
+        
+        return {
+            'mortality_score': self.mortality_model.score(X_scaled, y_mortality),
+            'decompensation_score': self.decompensation_model.score(X_scaled, y_decompensation),
+            'los_mse': np.mean((self.los_model.predict(X_scaled) - y_los) ** 2)
+        }
     
     def predict(self, X):
-        return self.model.predict(X)
+        X_scaled = self.scaler.transform(X)
+        return {
+            'mortality': self.mortality_model.predict_proba(X_scaled)[:, 1],
+            'decompensation': self.decompensation_model.predict_proba(X_scaled)[:, 1],
+            'los': self.los_model.predict(X_scaled)
+        }
     
-    def calculate_feature_importance(self, X, y):
-        # Simple feature importance calculation using permutation
-        feature_importance = []
-        baseline_score = self.model.evaluate(X, y, verbose=0)[0]
+    def calculate_feature_importance(self):
+        feature_names = [
+            'HR_mean', 'HR_std', 'HR_min', 'HR_max', 'HR_median',
+            'MAP_mean', 'MAP_std', 'MAP_min', 'MAP_max', 'MAP_median',
+            'RR_mean', 'RR_std', 'RR_min', 'RR_max', 'RR_median',
+            'O2_mean', 'O2_std', 'O2_min', 'O2_max', 'O2_median',
+            'FiO2_mean', 'FiO2_std', 'FiO2_min', 'FiO2_max', 'FiO2_median',
+            'Temp_mean', 'Temp_std', 'Temp_min', 'Temp_max', 'Temp_median',
+            'Glucose_mean', 'Glucose_std', 'Glucose_min', 'Glucose_max', 'Glucose_median',
+            'pH_mean', 'pH_std', 'pH_min', 'pH_max', 'pH_median',
+            'Weight', 'Height', 'LOS'
+        ]
         
-        for i in range(X.shape[2]):  # For each feature
-            X_permuted = X.copy()
-            X_permuted[:, :, i] = np.random.permutation(X_permuted[:, :, i])
-            permuted_score = self.model.evaluate(X_permuted, y, verbose=0)[0]
-            importance = (permuted_score - baseline_score) / baseline_score
-            feature_importance.append(importance)
+        importance_dict = {
+            'mortality': list(zip(feature_names, self.mortality_model.feature_importances_)),
+            'decompensation': list(zip(feature_names, self.decompensation_model.feature_importances_)),
+            'los': list(zip(feature_names, self.los_model.feature_importances_))
+        }
         
-        self.feature_importance = feature_importance
-        return feature_importance
+        self.feature_importance = importance_dict
+        return importance_dict
     
-    def save_model(self, model_path, scaler_path):
-        self.model.save(model_path)
-        joblib.dump(self.scaler, scaler_path)
+    def save_model(self, path_prefix):
+        joblib.dump(self.mortality_model, f'{path_prefix}_mortality.joblib')
+        joblib.dump(self.decompensation_model, f'{path_prefix}_decompensation.joblib')
+        joblib.dump(self.los_model, f'{path_prefix}_los.joblib')
+        joblib.dump(self.scaler, f'{path_prefix}_scaler.joblib')
         
-    def load_model(self, model_path, scaler_path):
-        self.model = tf.keras.models.load_model(model_path)
-        self.scaler = joblib.load(scaler_path)
+        with open(f'{path_prefix}_feature_importance.json', 'w') as f:
+            json.dump(self.feature_importance, f)
+    
+    def load_model(self, path_prefix):
+        self.mortality_model = joblib.load(f'{path_prefix}_mortality.joblib')
+        self.decompensation_model = joblib.load(f'{path_prefix}_decompensation.joblib')
+        self.los_model = joblib.load(f'{path_prefix}_los.joblib')
+        self.scaler = joblib.load(f'{path_prefix}_scaler.joblib')
+        
+        with open(f'{path_prefix}_feature_importance.json', 'r') as f:
+            self.feature_importance = json.load(f)
 
 def main():
     # Load and preprocess data
@@ -117,40 +161,26 @@ def main():
     model = ICUModel()
     df_processed = model.preprocess_data(df)
     
-    # Create sequences
-    X, y = model.create_sequences(df_processed)
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    # Create features and labels
+    X, y_mortality, y_decompensation, y_los = model.create_features(df_processed)
     
     # Train model
-    model.build_model((X_train.shape[1], X_train.shape[2]))
-    history = model.train(X_train, y_train)
+    scores = model.train(X, y_mortality, y_decompensation, y_los)
     
-    # Calculate feature importance
-    feature_importance = model.calculate_feature_importance(X_test, y_test)
-    
-    # Save results
-    feature_names = ['Heart Rate', 'MAP', 'Respiratory Rate', 'O2 Saturation',
-                    'FiO2', 'Temperature', 'Glucose', 'pH']
-    
-    importance_results = {
-        name: float(importance) 
-        for name, importance in zip(feature_names, feature_importance)
-    }
-    
-    with open('feature_importance.json', 'w') as f:
-        json.dump(importance_results, f)
+    print("Model Performance:")
+    print(f"Mortality AUC: {scores['mortality_score']:.3f}")
+    print(f"Decompensation AUC: {scores['decompensation_score']:.3f}")
+    print(f"Length of Stay MSE: {scores['los_mse']:.3f}")
     
     # Save model
-    model.save_model('icu_model.h5', 'scaler.pkl')
+    model.save_model('icu_model')
     
-    print("Model training completed and saved")
     print("\nFeature Importance:")
-    for name, importance in importance_results.items():
-        print(f"{name}: {importance:.4f}")
+    for model_type, importances in model.feature_importance.items():
+        print(f"\n{model_type.upper()} Model:")
+        sorted_imp = sorted(importances, key=lambda x: x[1], reverse=True)
+        for feature, importance in sorted_imp[:10]:
+            print(f"{feature}: {importance:.4f}")
 
 if __name__ == "__main__":
     main()
