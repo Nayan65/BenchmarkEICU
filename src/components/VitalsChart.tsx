@@ -29,24 +29,34 @@ const VitalsChart: React.FC = () => {
   const [timeRange, setTimeRange] = useState<'12h' | '24h' | '48h'>('24h');
   const [selectedVitals, setSelectedVitals] = useState<string[]>(['heartRate', 'map', 'o2Saturation', 'temperature']);
   const [showAlert, setShowAlert] = useState(false);
+  const [alertMessage, setAlertMessage] = useState('');
   
   useEffect(() => {
     if (selectedPatient) {
       const latestO2 = selectedPatient.vitals.o2Saturation[selectedPatient.vitals.o2Saturation.length - 1]?.value;
       if (latestO2 <= 50) {
+        const message = `Critical Alert: Patient ${selectedPatient.id} O2 saturation has dropped to ${latestO2.toFixed(1)}%`;
+        setAlertMessage(message);
         setShowAlert(true);
+        
         // Request notification permission and show notification
         if (Notification.permission === "granted") {
           new Notification("Critical Patient Alert", {
-            body: `Patient ${selectedPatient.id} O2 saturation has dropped to ${latestO2}%`,
-            icon: "/alert-icon.png"
+            body: message,
+            icon: "/alert-icon.png",
+            tag: `patient-${selectedPatient.id}`,
+            vibrate: [200, 100, 200],
+            requireInteraction: true
           });
         } else if (Notification.permission !== "denied") {
           Notification.requestPermission().then(permission => {
             if (permission === "granted") {
               new Notification("Critical Patient Alert", {
-                body: `Patient ${selectedPatient.id} O2 saturation has dropped to ${latestO2}%`,
-                icon: "/alert-icon.png"
+                body: message,
+                icon: "/alert-icon.png",
+                tag: `patient-${selectedPatient.id}`,
+                vibrate: [200, 100, 200],
+                requireInteraction: true
               });
             }
           });
@@ -259,7 +269,7 @@ const VitalsChart: React.FC = () => {
       {showAlert && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
           <strong className="font-bold">Critical Alert!</strong>
-          <span className="block sm:inline"> Patient's O2 saturation has dropped to critical level (≤ 50%).</span>
+          <span className="block sm:inline"> {alertMessage}</span>
         </div>
       )}
       
