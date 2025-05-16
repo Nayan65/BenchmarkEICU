@@ -12,6 +12,7 @@ import {
   Filler
 } from 'chart.js';
 import { usePatient } from '../../context/PatientContext';
+import toast from 'react-hot-toast';
 
 ChartJS.register(
   CategoryScale,
@@ -33,37 +34,83 @@ const VitalsChart: React.FC = () => {
   
   useEffect(() => {
     if (selectedPatient) {
-      const latestO2 = selectedPatient.vitals.o2Saturation[selectedPatient.vitals.o2Saturation.length - 1]?.value;
-      if (latestO2 <= 50) {
-        const message = `Critical Alert: Patient ${selectedPatient.id} O2 saturation has dropped to ${latestO2.toFixed(1)}%`;
-        setAlertMessage(message);
-        setShowAlert(true);
+      const checkVitals = () => {
+        const latestO2 = selectedPatient.vitals.o2Saturation[selectedPatient.vitals.o2Saturation.length - 1]?.value;
+        const latestRR = selectedPatient.vitals.respiratoryRate[selectedPatient.vitals.respiratoryRate.length - 1]?.value;
+        const decompRisk = selectedPatient.decompensationRisk * 100;
+        const losEstimate = selectedPatient.losEstimate;
         
-        // Request notification permission and show notification
-        if (Notification.permission === "granted") {
-          new Notification("Critical Patient Alert", {
-            body: message,
-            icon: "/alert-icon.png",
-            tag: `patient-${selectedPatient.id}`,
-            vibrate: [200, 100, 200],
-            requireInteraction: true
-          });
-        } else if (Notification.permission !== "denied") {
-          Notification.requestPermission().then(permission => {
-            if (permission === "granted") {
-              new Notification("Critical Patient Alert", {
-                body: message,
-                icon: "/alert-icon.png",
-                tag: `patient-${selectedPatient.id}`,
-                vibrate: [200, 100, 200],
-                requireInteraction: true
-              });
-            }
-          });
+        const alerts = [];
+        
+        // Check oxygen levels
+        if (latestO2 <= 50) {
+          alerts.push(`Critical: O2 saturation at ${latestO2.toFixed(1)}%`);
         }
-      } else {
-        setShowAlert(false);
-      }
+        
+        // Check respiratory rate
+        if (latestRR > 30) {
+          alerts.push(`High respiratory rate: ${latestRR.toFixed(1)} breaths/min`);
+        }
+        
+        // Check decompensation risk
+        if (decompRisk > 70) {
+          alerts.push(`High decompensation risk: ${decompRisk.toFixed(1)}%`);
+        }
+        
+        // Check estimated length of stay
+        if (losEstimate > 14) {
+          alerts.push(`Extended stay likely: ${losEstimate.toFixed(1)} days`);
+        }
+        
+        if (alerts.length > 0) {
+          const message = `Patient ${selectedPatient.id}: ${alerts.join(' | ')}`;
+          setAlertMessage(message);
+          setShowAlert(true);
+          
+          // Show notification
+          if (Notification.permission === "granted") {
+            new Notification("Patient Alert", {
+              body: message,
+              icon: "/alert-icon.png",
+              tag: `patient-${selectedPatient.id}`,
+              vibrate: [200, 100, 200],
+              requireInteraction: true
+            });
+            
+            // Show toast notification
+            toast.error(message, {
+              duration: 10000,
+              position: 'top-right',
+            });
+          } else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then(permission => {
+              if (permission === "granted") {
+                new Notification("Patient Alert", {
+                  body: message,
+                  icon: "/alert-icon.png",
+                  tag: `patient-${selectedPatient.id}`,
+                  vibrate: [200, 100, 200],
+                  requireInteraction: true
+                });
+                
+                // Show toast notification
+                toast.error(message, {
+                  duration: 10000,
+                  position: 'top-right',
+                });
+              }
+            });
+          }
+        } else {
+          setShowAlert(false);
+        }
+      };
+      
+      // Check vitals immediately and set up interval
+      checkVitals();
+      const interval = setInterval(checkVitals, 60000); // Check every minute
+      
+      return () => clearInterval(interval);
     }
   }, [selectedPatient]);
   
@@ -267,9 +314,18 @@ const VitalsChart: React.FC = () => {
   return (
     <div>
       {showAlert && (
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-          <strong className="font-bold">Critical Alert!</strong>
-          <span className="block sm:inline"> {alertMessage}</span>
+        <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4 rounded shadow-md" role="alert">
+          <div className="flex items-center">
+            <div className="py-1">
+              <svg className="h-6 w-6 text-red-500 mr-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+            </div>
+            <div>
+              <p className="font-bold">Critical Alert</p>
+              <p className="text-sm">{alertMessage}</p>
+            </div>
+          </div>
         </div>
       )}
       

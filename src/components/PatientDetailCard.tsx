@@ -1,5 +1,5 @@
 import React from 'react';
-import { Clock, Heart, Activity, AlertCircle, Thermometer, Eye } from 'lucide-react';
+import { Clock, Heart, Activity, AlertTriangle, Thermometer, Eye } from 'lucide-react';
 import { PatientData } from '../types';
 import { useModel } from '../context/ModelContext';
 
@@ -57,48 +57,29 @@ const PatientDetailCard: React.FC<PatientDetailCardProps> = ({ patient }) => {
   // Determine color based on risk value
   const getRiskColor = () => {
     if (selectedModelType === 'los') {
-      return 'bg-blue-500';
+      return patient.losEstimate > 14 ? 'bg-red-500' : 'bg-blue-500';
     }
     
     const riskValue = risk.value as number;
-    if (riskValue > 0.5) return 'bg-red-500';
-    if (riskValue > 0.3) return 'bg-amber-500';
+    if (riskValue > 0.7) return 'bg-red-500';
+    if (riskValue > 0.4) return 'bg-amber-500';
     return 'bg-green-500';
   };
 
-  // Function to handle CSV export
-  const handleExportCSV = () => {
-    const data = {
-      patientId: patient.id,
-      age: patient.age,
-      gender: patient.gender,
-      diagnosis: patient.admissionDiagnosis,
-      admissionTime: patient.admissionTime,
-      mortalityRisk: patient.mortalityRisk,
-      decompensationRisk: patient.decompensationRisk,
-      losEstimate: patient.losEstimate,
-      apache: patient.apache,
-      vitals: {
-        heartRate: patient.vitals.heartRate.map(v => v.value).join(';'),
-        map: patient.vitals.map.map(v => v.value).join(';'),
-        o2Saturation: patient.vitals.o2Saturation.map(v => v.value).join(';'),
-        temperature: patient.vitals.temperature.map(v => v.value).join(';')
+  // Function to handle notification settings
+  const handleNotificationSetup = async () => {
+    if (Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") {
+        // Test notification
+        new Notification("Notifications Enabled", {
+          body: "You will now receive alerts for critical patient events.",
+          icon: "/alert-icon.png"
+        });
       }
-    };
-
-    const csvContent = Object.entries(data)
-      .map(([key, value]) => `${key},${value}`)
-      .join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `patient-${patient.id}-data.csv`;
-    a.click();
-    window.URL.revokeObjectURL(url);
+    }
   };
-  
+
   return (
     <div className="bg-white rounded-lg shadow-sm p-6 transition-all duration-300 hover:shadow-md">
       <div className="flex justify-between mb-4">
@@ -111,22 +92,22 @@ const PatientDetailCard: React.FC<PatientDetailCardProps> = ({ patient }) => {
           </p>
         </div>
         <div className="flex items-center space-x-2">
+          <button
+            onClick={handleNotificationSetup}
+            className="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-full hover:bg-blue-200 transition-colors"
+          >
+            Enable Alerts
+          </button>
           <span className="px-3 py-1 text-sm font-medium bg-blue-100 text-blue-800 rounded-full">
             APACHE: {patient.apache}
           </span>
-          <button
-            onClick={handleExportCSV}
-            className="px-3 py-1 text-sm font-medium bg-gray-100 text-gray-800 rounded-full hover:bg-gray-200 transition-colors"
-          >
-            Export CSV
-          </button>
         </div>
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div className="p-3 bg-gray-50 rounded-lg">
           <div className="flex items-center text-sm text-gray-600 mb-1">
-            <AlertCircle className="h-4 w-4 mr-1 text-gray-500" />
+            <AlertTriangle className="h-4 w-4 mr-1 text-gray-500" />
             <span>Diagnosis</span>
           </div>
           <p className="text-base font-medium text-gray-800">{patient.admissionDiagnosis}</p>
